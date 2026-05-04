@@ -1,0 +1,11 @@
+[package]
+name = "whisper-proxy-installer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "whisper-proxy-installer"
+path = "src/main.rs"
+
+[dependencies]
+winreg = "0.55"

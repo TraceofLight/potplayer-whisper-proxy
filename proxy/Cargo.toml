@@ -1,0 +1,19 @@
+[package]
+name = "whisper-proxy"
+version = "0.1.0"
+edition = "2021"
+
+# main(64).exe 흉내 — 산출물 이름 그대로 main64.exe
+[[bin]]
+name = "main64"
+path = "src/main.rs"
+
+[dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+serde_json = "1"
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Pipes",
+  "Win32_Security",
+] }

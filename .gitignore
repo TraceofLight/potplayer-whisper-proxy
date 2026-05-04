@@ -1,0 +1,25 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# Build artifacts (배포는 GitHub Releases 사용)
+/dist
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Secrets / runtime
+.env
+.env.local
+*.key
+*.pem
+*.log
