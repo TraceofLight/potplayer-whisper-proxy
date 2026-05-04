@@ -208,13 +208,13 @@ fn fmt_ts(seconds: f64, comma: bool) -> String {
 
 fn write_outputs(
     args: &Args,
+    audio_path: &str,
     segs: &[Segment],
     full_text: &str,
     lang: &str,
 ) -> std::io::Result<()> {
-    let Some(prefix) = &args.output_prefix else {
-        return Ok(());
-    };
+    // -of 미지정 시 input audio path를 prefix로 (whisper.cpp 원본 동작).
+    let prefix: &str = args.output_prefix.as_deref().unwrap_or(audio_path);
 
     if args.out_txt {
         fs::write(format!("{prefix}.txt"), full_text)?;
@@ -389,7 +389,7 @@ fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
         let _ = out.flush();
     }
 
-    if let Err(e) = write_outputs(args, &segs, &full_text, &lang) {
+    if let Err(e) = write_outputs(args, audio_path, &segs, &full_text, &lang) {
         eprintln!("whisper-proxy: write output: {e}");
         return 5;
     }

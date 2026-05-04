@@ -107,7 +107,7 @@ fn can_write_to(dir: &Path) -> bool {
 
 // ---------- install / uninstall / status ----------
 
-// "main64.exe" → "main64.orig.exe", "foo" → "foo.orig" (확장자 무관 안전)
+// "<name>.orig.<ext>" 경로 (확장자 없으면 ".orig"만 추가).
 fn orig_path(engine_dir: &Path, name: &str) -> PathBuf {
     let p = Path::new(name);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);

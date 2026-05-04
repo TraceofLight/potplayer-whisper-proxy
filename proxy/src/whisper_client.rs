@@ -1,14 +1,124 @@
-// 공통 Whisper API 클라이언트 — main.rs(파일 기반 호출)와
-// ipc.rs(실시간 chunk 호출) 양쪽이 사용.
-//
-// OpenAI 호환 multipart/form-data 요청을 만들고 응답 JSON에서
-// segments / text / language를 파싱해 돌려준다.
+// OpenAI 호환 Whisper API 클라이언트 (multipart/form-data POST).
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
 use crate::config::Config;
+
+// 영어 이름("korean") → ISO 639-1("ko") 변환. 이미 ISO 코드면 그대로 통과.
+// 매핑 테이블은 whisper.cpp의 g_lang(99개) 기준.
+fn normalize_language(lang: &str) -> String {
+    let lower = lang.to_ascii_lowercase();
+    // 짧고 ASCII 문자만으로 구성됐으면 이미 ISO 639-1/2 코드로 간주
+    if lower.len() <= 3 && lower.chars().all(|c| c.is_ascii_alphabetic()) {
+        return lower;
+    }
+    let iso = match lower.as_str() {
+        "english" => "en",
+        "chinese" => "zh",
+        "german" => "de",
+        "spanish" => "es",
+        "russian" => "ru",
+        "korean" => "ko",
+        "french" => "fr",
+        "japanese" => "ja",
+        "portuguese" => "pt",
+        "turkish" => "tr",
+        "polish" => "pl",
+        "catalan" => "ca",
+        "dutch" => "nl",
+        "arabic" => "ar",
+        "swedish" => "sv",
+        "italian" => "it",
+        "indonesian" => "id",
+        "hindi" => "hi",
+        "finnish" => "fi",
+        "vietnamese" => "vi",
+        "hebrew" => "he",
+        "ukrainian" => "uk",
+        "greek" => "el",
+        "malay" => "ms",
+        "czech" => "cs",
+        "romanian" => "ro",
+        "danish" => "da",
+        "hungarian" => "hu",
+        "tamil" => "ta",
+        "norwegian" => "no",
+        "thai" => "th",
+        "urdu" => "ur",
+        "croatian" => "hr",
+        "bulgarian" => "bg",
+        "lithuanian" => "lt",
+        "latin" => "la",
+        "maori" => "mi",
+        "malayalam" => "ml",
+        "welsh" => "cy",
+        "slovak" => "sk",
+        "telugu" => "te",
+        "persian" => "fa",
+        "latvian" => "lv",
+        "bengali" => "bn",
+        "serbian" => "sr",
+        "azerbaijani" => "az",
+        "slovenian" => "sl",
+        "kannada" => "kn",
+        "estonian" => "et",
+        "macedonian" => "mk",
+        "breton" => "br",
+        "basque" => "eu",
+        "icelandic" => "is",
+        "armenian" => "hy",
+        "nepali" => "ne",
+        "mongolian" => "mn",
+        "bosnian" => "bs",
+        "kazakh" => "kk",
+        "albanian" => "sq",
+        "swahili" => "sw",
+        "galician" => "gl",
+        "marathi" => "mr",
+        "punjabi" => "pa",
+        "sinhala" => "si",
+        "khmer" => "km",
+        "shona" => "sn",
+        "yoruba" => "yo",
+        "somali" => "so",
+        "afrikaans" => "af",
+        "occitan" => "oc",
+        "georgian" => "ka",
+        "belarusian" => "be",
+        "tajik" => "tg",
+        "sindhi" => "sd",
+        "gujarati" => "gu",
+        "amharic" => "am",
+        "yiddish" => "yi",
+        "lao" => "lo",
+        "uzbek" => "uz",
+        "faroese" => "fo",
+        "haitian creole" => "ht",
+        "pashto" => "ps",
+        "turkmen" => "tk",
+        "nynorsk" => "nn",
+        "maltese" => "mt",
+        "sanskrit" => "sa",
+        "luxembourgish" => "lb",
+        "myanmar" => "my",
+        "tibetan" => "bo",
+        "tagalog" => "tl",
+        "malagasy" => "mg",
+        "assamese" => "as",
+        "tatar" => "tt",
+        "hawaiian" => "haw",
+        "lingala" => "ln",
+        "hausa" => "ha",
+        "bashkir" => "ba",
+        "javanese" => "jw",
+        "sundanese" => "su",
+        "cantonese" => "yue",
+        _ => return lower, // 알 수 없으면 그대로 (server가 reject 시 명확한 에러)
+    };
+    iso.to_string()
+}
 
 #[derive(Debug, Clone)]
 pub struct Segment {
@@ -39,10 +149,13 @@ pub fn transcribe(cfg: &Config, req: &TranscribeRequest<'_>) -> Result<Transcrib
         ("model", cfg.model.as_str()),
         ("response_format", "verbose_json"),
     ];
-    if let Some(l) = req.language {
-        if l != "auto" && !l.is_empty() {
-            fields.push(("language", l));
-        }
+    // ISO 639-1로 정규화. fields가 borrow하므로 함수 끝까지 살아야 함.
+    let normalized = req
+        .language
+        .filter(|l| !l.is_empty() && *l != "auto")
+        .map(normalize_language);
+    if let Some(ref n) = normalized {
+        fields.push(("language", n.as_str()));
     }
     if let Some(p) = req.prompt {
         fields.push(("prompt", p));

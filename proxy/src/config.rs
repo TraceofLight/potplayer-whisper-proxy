@@ -1,11 +1,5 @@
-// 공통 설정 로더 — main.rs(`-IPC` 외 모드)와 ipc.rs(`-IPC` 모드) 양쪽이 사용.
-//
-// 우선순위: 환경변수 > whisper-proxy.ini > 내장 default.
-// INI는 `whisper-proxy.ini`(바이너리와 같은 폴더)를 읽으며, [server] 섹션의
-// url / api_key / model / timeout 키만 인식.
-//
-// PowerShell `Set-Content -Encoding UTF8`이 파일 앞에 붙이는 UTF-8 BOM은
-// 자동으로 제거 (예전 버전에서 첫 키가 깨지는 버그가 있었음).
+// 설정 로더. 우선순위: env vars > whisper-proxy.ini > 내장 default.
+// INI는 [server] 섹션의 url / api_key / model / timeout 만 읽음.
 
 use std::env;
 use std::fs;

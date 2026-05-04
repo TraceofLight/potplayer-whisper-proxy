@@ -136,8 +136,7 @@ fn make_wav_f32_mono_16k(samples_bytes: &[u8]) -> Vec<u8> {
     w
 }
 
-// 실시간 chunk → API 호출. 공통 whisper_client::transcribe wrapping.
-// 빈 텍스트 segment는 자막 노이즈가 되므로 여기서 한 번 더 거른다.
+// 실시간 chunk 호출 wrapping. 빈 텍스트는 자막 노이즈라 필터링.
 fn transcribe_chunk(
     cfg: &Config,
     wav: &[u8],
@@ -179,33 +178,24 @@ fn transcribe_chunk(
 }
 
 // ---------- init handshake ----------
-//
-// PotPlayer's stock main64.exe wraps whisper.cpp and forwards the library's
-// init log lines to the player UI as frames (code 0x10000), then signals
-// completion with a READY frame (code 0x11). We don't actually load a model
-// (transcription is remote), so we synthesize the equivalent frame stream.
-//
-// The text content matches whisper.cpp's standard init output (whisper.cpp is
-// MIT-licensed: https://github.com/ggerganov/whisper.cpp). The exact field
-// values are cosmetic — PotPlayer only gates on the trailing READY frame
-// before it starts sending audio.
+// LOAD_MODEL 응답: whisper.cpp 표준 init log 35개(code 0x10000) + READY(0x11).
+// 텍스트 값은 cosmetic — PotPlayer는 READY frame 받으면 audio 송신 시작.
 
 const FRAME_MAGIC: u32 = 0x11111111;
 
-// PotPlayer → 우리 (request)
+// PotPlayer → 우리
 const FRAME_LOAD_MODEL: u32 = 0x10;
 const FRAME_CONVERT: u32 = 0x20;
 const FRAME_AUDIO: u32 = 0x21;
 
-// 우리 → PotPlayer (response)
+// 우리 → PotPlayer
 const FRAME_LOG: u32 = 0x10000;
 const FRAME_READY: u32 = 0x11;
 const FRAME_CONVERT_END: u32 = 0x22;
 const FRAME_SEGMENT_TIMING: u32 = 0x20000;
 const FRAME_SEGMENT_TEXT: u32 = 0x20001;
 
-// 영상 SEEK 감지: 인접 chunk의 ts_ms 차이가 이 임계값 이상이면 새 위치로 간주.
-// 너무 작으면 정상 chunk 진행도 SEEK으로 오인, 너무 크면 짧은 jump 놓침.
+// SEEK 감지: chunk 간 ts_ms 차이가 이 이상이면 새 위치로 간주.
 const SEEK_THRESHOLD_MS: i64 = 10_000;
 
 const INIT_LOG_LINES: &[&str] = &[
@@ -495,13 +485,7 @@ pub fn run(ipc_name: &str) -> i32 {
                     }
                 };
                 let started = std::time::Instant::now();
-                // STALE 판정은 SEEK epoch 기준.
-                // 시간 drift 기준(과거 5초)은 SEEK 직후 정상 chunk까지 drop했음:
-                // PotPlayer가 SEEK 위치(t)와 다음 chunk(t+5~10s)를 빠르게 보내면
-                // worker가 t를 transcribe하는 동안 latest_ts가 t+N으로 갱신되어
-                // |t+N - t| > 5000 이 되어 SEEK 위치 자막이 drop됐음.
-                // epoch 기준으로 바꾸면 같은 SEEK 시점의 chunk는 모두 처리되고,
-                // 그 사이 또 SEEK이 발생한 경우(epoch 증가)에만 stale.
+                // 같은 epoch 내면 처리, 다른 epoch이면 stale (그 사이 또 SEEK 발생).
                 let cur_epoch = seek_epoch.load(std::sync::atomic::Ordering::Relaxed);
                 let stale_pre = job.status < cur_epoch;
 
