@@ -1,0 +1,30 @@
+name: CI
+
+# main으로 가는 모든 push와 모든 PR에 대해 빌드 + lint 검증.
+# release를 만들지 않으므로 부담 없이 자주 실행됨.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+
+      - name: Build (release)
+        run: cargo build --release --workspace

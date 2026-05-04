@@ -29,15 +29,21 @@ const INI_TEMPLATE: &str = include_str!("../whisper-proxy.ini.template");
 
 fn from_app_paths(view: u32, exe_name: &str) -> Option<PathBuf> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let key_path = format!(
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{exe_name}"
-    );
-    let key = hklm.open_subkey_with_flags(&key_path, KEY_READ | view).ok()?;
-    let path: String = key.get_value("Path").ok()
+    let key_path = format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{exe_name}");
+    let key = hklm
+        .open_subkey_with_flags(&key_path, KEY_READ | view)
+        .ok()?;
+    let path: String = key
+        .get_value("Path")
+        .ok()
         .or_else(|| key.get_value("").ok())?;
     let p = PathBuf::from(path.trim().trim_matches('"'));
     // App Paths의 Path는 보통 폴더, 아니면 exe → 폴더
-    if p.is_dir() { Some(p) } else { p.parent().map(|p| p.to_path_buf()) }
+    if p.is_dir() {
+        Some(p)
+    } else {
+        p.parent().map(|p| p.to_path_buf())
+    }
 }
 
 fn discover_potplayer() -> Option<PathBuf> {
@@ -66,7 +72,9 @@ fn discover_potplayer() -> Option<PathBuf> {
 fn list_engines(potplayer: &Path) -> Vec<String> {
     let whisper_dir = potplayer.join("Module").join("Whisper");
     let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(&whisper_dir) else { return out; };
+    let Ok(entries) = fs::read_dir(&whisper_dir) else {
+        return out;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -88,7 +96,11 @@ fn can_write_to(dir: &Path) -> bool {
     // 실제 대상 폴더에 임시 파일 만들 수 있으면 OK (권한·읽기전용 둘 다 커버)
     let test = dir.join(format!(".whisper-proxy-write-test-{}", std::process::id()));
     match fs::File::create(&test) {
-        Ok(f) => { drop(f); let _ = fs::remove_file(&test); true }
+        Ok(f) => {
+            drop(f);
+            let _ = fs::remove_file(&test);
+            true
+        }
         Err(_) => false,
     }
 }
@@ -159,7 +171,10 @@ fn uninstall_engine(engine_dir: &Path) -> std::io::Result<()> {
                 fs::remove_file(&orig)?;
                 println!("  restore {}", live.display());
             } else {
-                println!("  (현재 파일이 백업이 아님 — 수동 확인 필요) {}", live.display());
+                println!(
+                    "  (현재 파일이 백업이 아님 — 수동 확인 필요) {}",
+                    live.display()
+                );
             }
         } else {
             println!("  (백업 없음) {}", live.display());
@@ -180,17 +195,23 @@ fn status_engine(engine_dir: &Path) {
         let orig = orig_path(engine_dir, name);
         let ours = live.exists() && is_our_binary(&live).unwrap_or(false);
         let backed_up = orig.exists();
-        let mark = if ours && backed_up { "INSTALLED (backup OK)" }
-                   else if ours { "INSTALLED (no backup!)" }
-                   else if backed_up { "ORIGINAL ACTIVE (backup present)" }
-                   else { "ORIGINAL ACTIVE" };
+        let mark = if ours && backed_up {
+            "INSTALLED (backup OK)"
+        } else if ours {
+            "INSTALLED (no backup!)"
+        } else if backed_up {
+            "ORIGINAL ACTIVE (backup present)"
+        } else {
+            "ORIGINAL ACTIVE"
+        };
         println!("    {name:14} -> {mark}");
     }
     let ini_path = engine_dir.join("whisper-proxy.ini");
     if ini_path.exists() {
         match fs::read_to_string(&ini_path) {
             Ok(t) => {
-                let url = t.lines()
+                let url = t
+                    .lines()
                     .map(|s| s.trim())
                     .find(|s| s.to_ascii_lowercase().starts_with("url"))
                     .unwrap_or("(url 없음)");
@@ -207,7 +228,7 @@ fn status_engine(engine_dir: &Path) {
 
 struct Cli {
     cmd: String,
-    engine: String,                 // "Vulkan" | "CPU" | "all"
+    engine: String, // "Vulkan" | "CPU" | "all"
     potplayer_dir: Option<String>,
     url: Option<String>,
     model: Option<String>,
@@ -232,15 +253,29 @@ impl Default for Cli {
 fn parse_cli(args: Vec<String>) -> Cli {
     let mut cli = Cli::default();
     let mut it = args.into_iter();
-    if let Some(c) = it.next() { cli.cmd = c; }
+    if let Some(c) = it.next() {
+        cli.cmd = c;
+    }
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--engine"        => { cli.engine        = it.next().unwrap_or_default(); }
-            "--potplayer-dir" => { cli.potplayer_dir = it.next(); }
-            "--url"           => { cli.url           = it.next(); }
-            "--model"         => { cli.model         = it.next(); }
-            "--api-key"       => { cli.api_key       = it.next(); }
-            "--timeout"       => { cli.timeout       = it.next(); }
+            "--engine" => {
+                cli.engine = it.next().unwrap_or_default();
+            }
+            "--potplayer-dir" => {
+                cli.potplayer_dir = it.next();
+            }
+            "--url" => {
+                cli.url = it.next();
+            }
+            "--model" => {
+                cli.model = it.next();
+            }
+            "--api-key" => {
+                cli.api_key = it.next();
+            }
+            "--timeout" => {
+                cli.timeout = it.next();
+            }
             other if other.starts_with("--") => {
                 eprintln!("warning: unknown flag '{other}' ignored (typo? — see USAGE)");
             }
@@ -252,10 +287,26 @@ fn parse_cli(args: Vec<String>) -> Cli {
 
 fn render_ini(cli: &Cli) -> String {
     let mut t = INI_TEMPLATE.to_string();
-    if let Some(v) = &cli.url     { t = t.replace("{{URL}}",     v); } else { t = t.replace("{{URL}}",     "http://localhost:8000/v1"); }
-    if let Some(v) = &cli.model   { t = t.replace("{{MODEL}}",   v); } else { t = t.replace("{{MODEL}}",   "Systran/faster-whisper-large-v3"); }
-    if let Some(v) = &cli.api_key { t = t.replace("{{APIKEY}}",  v); } else { t = t.replace("{{APIKEY}}",  ""); }
-    if let Some(v) = &cli.timeout { t = t.replace("{{TIMEOUT}}", v); } else { t = t.replace("{{TIMEOUT}}", "300"); }
+    if let Some(v) = &cli.url {
+        t = t.replace("{{URL}}", v);
+    } else {
+        t = t.replace("{{URL}}", "http://localhost:8000/v1");
+    }
+    if let Some(v) = &cli.model {
+        t = t.replace("{{MODEL}}", v);
+    } else {
+        t = t.replace("{{MODEL}}", "Systran/faster-whisper-large-v3");
+    }
+    if let Some(v) = &cli.api_key {
+        t = t.replace("{{APIKEY}}", v);
+    } else {
+        t = t.replace("{{APIKEY}}", "");
+    }
+    if let Some(v) = &cli.timeout {
+        t = t.replace("{{TIMEOUT}}", v);
+    } else {
+        t = t.replace("{{TIMEOUT}}", "300");
+    }
     t
 }
 
@@ -289,12 +340,14 @@ fn main() -> ExitCode {
                 eprintln!("       --potplayer-dir 로 직접 지정하세요.");
                 return ExitCode::from(2);
             }
-        }
+        },
     };
 
     if !potplayer.join("Module").join("Whisper").is_dir() {
-        eprintln!("error: {} 안에 Module\\Whisper 폴더가 없음. PotPlayer가 맞는지 확인.",
-            potplayer.display());
+        eprintln!(
+            "error: {} 안에 Module\\Whisper 폴더가 없음. PotPlayer가 맞는지 확인.",
+            potplayer.display()
+        );
         return ExitCode::from(2);
     }
     println!("PotPlayer: {}", potplayer.display());
@@ -307,13 +360,16 @@ fn main() -> ExitCode {
 
     let engines: Vec<String> = match cli.engine.to_ascii_lowercase().as_str() {
         "all" => engines_all.clone(),
-        e if engines_all.iter().any(|x| x.eq_ignore_ascii_case(e)) => {
-            engines_all.into_iter().filter(|x| x.eq_ignore_ascii_case(e)).collect()
-        }
+        e if engines_all.iter().any(|x| x.eq_ignore_ascii_case(e)) => engines_all
+            .into_iter()
+            .filter(|x| x.eq_ignore_ascii_case(e))
+            .collect(),
         _ => {
-            eprintln!("error: '--engine {}' 알 수 없음. 사용 가능: {}",
+            eprintln!(
+                "error: '--engine {}' 알 수 없음. 사용 가능: {}",
                 cli.engine,
-                engines_all.join(", "));
+                engines_all.join(", ")
+            );
             return ExitCode::from(2);
         }
     };
@@ -322,20 +378,22 @@ fn main() -> ExitCode {
     match cli.cmd.as_str() {
         "detect" => {
             println!("(자동 탐색 결과만 출력하고 종료)");
-            return ExitCode::from(0);
+            ExitCode::from(0)
         }
         "status" => {
             for e in &engines {
                 status_engine(&potplayer.join("Module").join("Whisper").join(e));
             }
-            return ExitCode::from(0);
+            ExitCode::from(0)
         }
         "install" => {
             // 첫 번째 엔진 폴더로 쓰기 가능 여부 점검 (대표 샘플)
             let probe = potplayer.join("Module").join("Whisper").join(&engines[0]);
             if !can_write_to(&probe) {
-                eprintln!("error: {} 폴더에 쓰기 불가. 관리자 PowerShell에서 재실행하거나",
-                    probe.display());
+                eprintln!(
+                    "error: {} 폴더에 쓰기 불가. 관리자 PowerShell에서 재실행하거나",
+                    probe.display()
+                );
                 eprintln!("       --potplayer-dir 로 쓰기 가능한 경로 지정.");
                 return ExitCode::from(3);
             }
@@ -356,8 +414,10 @@ fn main() -> ExitCode {
         "uninstall" => {
             let probe = potplayer.join("Module").join("Whisper").join(&engines[0]);
             if !can_write_to(&probe) {
-                eprintln!("error: {} 폴더에 쓰기 불가. 관리자 PowerShell에서 재실행.",
-                    probe.display());
+                eprintln!(
+                    "error: {} 폴더에 쓰기 불가. 관리자 PowerShell에서 재실행.",
+                    probe.display()
+                );
                 return ExitCode::from(3);
             }
             for e in &engines {

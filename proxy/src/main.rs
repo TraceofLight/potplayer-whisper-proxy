@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod config;
-mod whisper_client;
 #[cfg(windows)]
 mod ipc;
+mod whisper_client;
 
 use config::Config;
 use whisper_client::{Segment, TranscribeRequest};
@@ -45,18 +45,73 @@ struct Args {
 
 // whisper.cpp options that take a value (everything else: bool flag, no value).
 const VALUE_OPTS: &[&str] = &[
-    "-t","--threads","-p","--processors","-ot","--offset-t","-on","--offset-n",
-    "-d","--duration","-mc","--max-context","-ml","--max-len","-bo","--best-of",
-    "-bs","--beam-size","-ac","--audio-ctx","-wt","--word-thold",
-    "-et","--entropy-thold","-lpt","--logprob-thold","-nth","--no-speech-thold",
-    "-tp","--temperature","-tpi","--temperature-inc","-fp","--font-path",
-    "-of","--output-file","-l","--language","--prompt","-m","--model",
-    "-f","--file","-oved","--ov-e-device","-dtw","--dtw","-dev","--device",
-    "--suppress-regex","--grammar","--grammar-rule","--grammar-penalty",
-    "-vm","--vad-model","-vt","--vad-threshold",
-    "-vspd","--vad-min-speech-duration-ms","-vsd","--vad-min-silence-duration-ms",
-    "-vmsd","--vad-max-speech-duration-s","-vp","--vad-speech-pad-ms",
-    "-vo","--vad-samples-overlap",
+    "-t",
+    "--threads",
+    "-p",
+    "--processors",
+    "-ot",
+    "--offset-t",
+    "-on",
+    "--offset-n",
+    "-d",
+    "--duration",
+    "-mc",
+    "--max-context",
+    "-ml",
+    "--max-len",
+    "-bo",
+    "--best-of",
+    "-bs",
+    "--beam-size",
+    "-ac",
+    "--audio-ctx",
+    "-wt",
+    "--word-thold",
+    "-et",
+    "--entropy-thold",
+    "-lpt",
+    "--logprob-thold",
+    "-nth",
+    "--no-speech-thold",
+    "-tp",
+    "--temperature",
+    "-tpi",
+    "--temperature-inc",
+    "-fp",
+    "--font-path",
+    "-of",
+    "--output-file",
+    "-l",
+    "--language",
+    "--prompt",
+    "-m",
+    "--model",
+    "-f",
+    "--file",
+    "-oved",
+    "--ov-e-device",
+    "-dtw",
+    "--dtw",
+    "-dev",
+    "--device",
+    "--suppress-regex",
+    "--grammar",
+    "--grammar-rule",
+    "--grammar-penalty",
+    "-vm",
+    "--vad-model",
+    "-vt",
+    "--vad-threshold",
+    "-vspd",
+    "--vad-min-speech-duration-ms",
+    "-vsd",
+    "--vad-min-silence-duration-ms",
+    "-vmsd",
+    "--vad-max-speech-duration-s",
+    "-vp",
+    "--vad-speech-pad-ms",
+    "-vo",
+    "--vad-samples-overlap",
 ];
 
 fn opt_takes_value(opt: &str) -> bool {
@@ -71,40 +126,56 @@ fn parse_args(raw: Vec<String>) -> Args {
         match arg.as_str() {
             "-h" | "--help" => a.help = true,
             "-f" | "--file" => {
-                if let Some(v) = raw.get(i + 1) { a.files.push(v.clone()); i += 1; }
+                if let Some(v) = raw.get(i + 1) {
+                    a.files.push(v.clone());
+                    i += 1;
+                }
             }
             "-l" | "--language" => {
-                if let Some(v) = raw.get(i + 1) { a.language = Some(v.clone()); i += 1; }
+                if let Some(v) = raw.get(i + 1) {
+                    a.language = Some(v.clone());
+                    i += 1;
+                }
             }
             "-of" | "--output-file" => {
-                if let Some(v) = raw.get(i + 1) { a.output_prefix = Some(v.clone()); i += 1; }
+                if let Some(v) = raw.get(i + 1) {
+                    a.output_prefix = Some(v.clone());
+                    i += 1;
+                }
             }
             "-otxt" | "--output-txt" => a.out_txt = true,
             "-osrt" | "--output-srt" => a.out_srt = true,
             "-ovtt" | "--output-vtt" => a.out_vtt = true,
-            "-oj"   | "--output-json" => a.out_json = true,
-            "-ojf"  | "--output-json-full" => a.out_json_full = true,
+            "-oj" | "--output-json" => a.out_json = true,
+            "-ojf" | "--output-json-full" => a.out_json_full = true,
             "-olrc" | "--output-lrc" => a.out_lrc = true,
             "-ocsv" | "--output-csv" => a.out_csv = true,
-            "-tr"   | "--translate" => a.translate = true,
-            "-nt"   | "--no-timestamps" => a.no_timestamps = true,
-            "-np"   | "--no-prints" => a.no_prints = true,
-            "-ot"   | "--offset-t" => {
+            "-tr" | "--translate" => a.translate = true,
+            "-nt" | "--no-timestamps" => a.no_timestamps = true,
+            "-np" | "--no-prints" => a.no_prints = true,
+            "-ot" | "--offset-t" => {
                 if let Some(v) = raw.get(i + 1) {
                     a.offset_ms = v.parse().unwrap_or(0);
                     i += 1;
                 }
             }
             "--prompt" => {
-                if let Some(v) = raw.get(i + 1) { a.prompt = Some(v.clone()); i += 1; }
+                if let Some(v) = raw.get(i + 1) {
+                    a.prompt = Some(v.clone());
+                    i += 1;
+                }
             }
             other => {
                 if other.starts_with('-') {
                     // unknown flag — skip its value if it takes one
-                    if opt_takes_value(other) { i += 1; }
+                    if opt_takes_value(other) {
+                        i += 1;
+                    }
                 } else {
                     // bare positional — treat as audio file if it exists
-                    if Path::new(other).exists() { a.files.push(other.to_string()); }
+                    if Path::new(other).exists() {
+                        a.files.push(other.to_string());
+                    }
                 }
             }
         }
@@ -135,8 +206,15 @@ fn fmt_ts(seconds: f64, comma: bool) -> String {
 
 // ---------- output writers ----------
 
-fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> std::io::Result<()> {
-    let Some(prefix) = &args.output_prefix else { return Ok(()); };
+fn write_outputs(
+    args: &Args,
+    segs: &[Segment],
+    full_text: &str,
+    lang: &str,
+) -> std::io::Result<()> {
+    let Some(prefix) = &args.output_prefix else {
+        return Ok(());
+    };
 
     if args.out_txt {
         fs::write(format!("{prefix}.txt"), full_text)?;
@@ -145,7 +223,11 @@ fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> 
         let mut s = String::new();
         for (i, seg) in segs.iter().enumerate() {
             s.push_str(&format!("{}\n", i + 1));
-            s.push_str(&format!("{} --> {}\n", fmt_ts(seg.start, true), fmt_ts(seg.end, true)));
+            s.push_str(&format!(
+                "{} --> {}\n",
+                fmt_ts(seg.start, true),
+                fmt_ts(seg.end, true)
+            ));
             s.push_str(seg.text.trim());
             s.push_str("\n\n");
         }
@@ -154,7 +236,11 @@ fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> 
     if args.out_vtt {
         let mut s = String::from("WEBVTT\n\n");
         for seg in segs {
-            s.push_str(&format!("{} --> {}\n", fmt_ts(seg.start, false), fmt_ts(seg.end, false)));
+            s.push_str(&format!(
+                "{} --> {}\n",
+                fmt_ts(seg.start, false),
+                fmt_ts(seg.end, false)
+            ));
             s.push_str(seg.text.trim());
             s.push_str("\n\n");
         }
@@ -182,7 +268,10 @@ fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> 
             "result": { "language": lang },
             "transcription": transcription,
         });
-        fs::write(format!("{prefix}.json"), serde_json::to_string_pretty(&payload)?)?;
+        fs::write(
+            format!("{prefix}.json"),
+            serde_json::to_string_pretty(&payload)?,
+        )?;
     }
     if args.out_lrc {
         let mut s = String::new();
@@ -200,7 +289,7 @@ fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> 
             s.push_str(&format!(
                 "{},{},\"{}\"\n",
                 (seg.start * 1000.0) as i64,
-                (seg.end   * 1000.0) as i64,
+                (seg.end * 1000.0) as i64,
                 txt,
             ));
         }
@@ -213,18 +302,28 @@ fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> 
 
 fn guess_mime(path: &str) -> &'static str {
     let lower = path.to_ascii_lowercase();
-    if      lower.ends_with(".wav")  { "audio/wav" }
-    else if lower.ends_with(".mp3")  { "audio/mpeg" }
-    else if lower.ends_with(".ogg")  { "audio/ogg" }
-    else if lower.ends_with(".flac") { "audio/flac" }
-    else if lower.ends_with(".m4a")  { "audio/mp4" }
-    else { "application/octet-stream" }
+    if lower.ends_with(".wav") {
+        "audio/wav"
+    } else if lower.ends_with(".mp3") {
+        "audio/mpeg"
+    } else if lower.ends_with(".ogg") {
+        "audio/ogg"
+    } else if lower.ends_with(".flac") {
+        "audio/flac"
+    } else if lower.ends_with(".m4a") {
+        "audio/mp4"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
     let bytes = match fs::read(audio_path) {
         Ok(b) => b,
-        Err(e) => { eprintln!("whisper-proxy: cannot read {audio_path}: {e}"); return 1; }
+        Err(e) => {
+            eprintln!("whisper-proxy: cannot read {audio_path}: {e}");
+            return 1;
+        }
     };
     let file_name = Path::new(audio_path)
         .file_name()
@@ -246,9 +345,13 @@ fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
         Err(e) => {
             eprintln!("whisper-proxy: {e}");
             // HTTP error → 2, request error → 3, body/JSON 파싱 → 4
-            return if e.starts_with("HTTP ") { 2 }
-                   else if e.starts_with("request failed") { 3 }
-                   else { 4 };
+            return if e.starts_with("HTTP ") {
+                2
+            } else if e.starts_with("request failed") {
+                3
+            } else {
+                4
+            };
         }
     };
 
@@ -257,7 +360,7 @@ fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
         let off = args.offset_ms as f64 / 1000.0;
         for s in segs.iter_mut() {
             s.start += off;
-            s.end   += off;
+            s.end += off;
         }
     }
 
@@ -274,10 +377,12 @@ fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
             let line = if args.no_timestamps {
                 format!("{}\n", seg.text.trim())
             } else {
-                format!("[{} --> {}]  {}\n",
+                format!(
+                    "[{} --> {}]  {}\n",
                     fmt_ts(seg.start, false),
-                    fmt_ts(seg.end,   false),
-                    seg.text.trim())
+                    fmt_ts(seg.end, false),
+                    seg.text.trim()
+                )
             };
             let _ = out.write_all(line.as_bytes());
         }
@@ -305,9 +410,13 @@ fn debug_log_path() -> Option<PathBuf> {
     // 로그 위치는 사용자 권한으로 쓰기 가능한 %TEMP%\whisper-proxy.log
     // (Program Files은 비관리자 프로세스로는 못 쓰므로)
     let dir = base_dir();
-    let want = env::var("WHISPER_PROXY_DEBUG").map(|v| v != "0" && !v.is_empty()).unwrap_or(false)
+    let want = env::var("WHISPER_PROXY_DEBUG")
+        .map(|v| v != "0" && !v.is_empty())
+        .unwrap_or(false)
         || dir.join("whisper-proxy.debug").exists();
-    if !want { return None; }
+    if !want {
+        return None;
+    }
     let log_dir = env::var_os("TEMP")
         .or_else(|| env::var_os("TMP"))
         .or_else(|| env::var_os("LOCALAPPDATA"))
@@ -330,7 +439,10 @@ fn main() -> ExitCode {
     let log = debug_log_path();
     if let Some(p) = &log {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let t = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         debug_write(p, &format!("=== call t={t} pid={} ===", std::process::id()));
         debug_write(p, &format!("argv: {:?}", raw));
         debug_write(p, &format!("cwd : {:?}", env::current_dir().ok()));
@@ -342,33 +454,59 @@ fn main() -> ExitCode {
         for w in raw.windows(2) {
             if w[0] == "-IPC" {
                 let rc = ipc::run(&w[1]);
-                if let Some(p) = &log { debug_write(p, &format!("=== ipc exit rc={rc} ===\n")); }
-                return ExitCode::from(rc.max(0).min(255) as u8);
+                if let Some(p) = &log {
+                    debug_write(p, &format!("=== ipc exit rc={rc} ===\n"));
+                }
+                return ExitCode::from(rc.clamp(0, 255) as u8);
             }
         }
     }
 
     let args = parse_args(raw);
     if args.help || args.files.is_empty() {
-        if let Some(p) = &log { debug_write(p, "no input files -> printed help and exited 0"); }
+        if let Some(p) = &log {
+            debug_write(p, "no input files -> printed help and exited 0");
+        }
         print_help();
         return ExitCode::from(0);
     }
     let cfg = config::load(&base_dir());
     if let Some(p) = &log {
-        debug_write(p, &format!(
-            "config: url={} model={} timeout={}s key_set={}",
-            cfg.url, cfg.model, cfg.timeout, !cfg.api_key.is_empty()
-        ));
-        debug_write(p, &format!("output_prefix={:?} flags(srt={} vtt={} txt={} json={} jsonfull={})",
-            args.output_prefix, args.out_srt, args.out_vtt, args.out_txt, args.out_json, args.out_json_full));
+        debug_write(
+            p,
+            &format!(
+                "config: url={} model={} timeout={}s key_set={}",
+                cfg.url,
+                cfg.model,
+                cfg.timeout,
+                !cfg.api_key.is_empty()
+            ),
+        );
+        debug_write(
+            p,
+            &format!(
+                "output_prefix={:?} flags(srt={} vtt={} txt={} json={} jsonfull={})",
+                args.output_prefix,
+                args.out_srt,
+                args.out_vtt,
+                args.out_txt,
+                args.out_json,
+                args.out_json_full
+            ),
+        );
     }
     let mut rc: i32 = 0;
     for f in &args.files {
         let r = transcribe_one(f, &args, &cfg);
-        if r != 0 { rc = r; }
-        if let Some(p) = &log { debug_write(p, &format!("transcribe_one({f}) -> rc={r}")); }
+        if r != 0 {
+            rc = r;
+        }
+        if let Some(p) = &log {
+            debug_write(p, &format!("transcribe_one({f}) -> rc={r}"));
+        }
     }
-    if let Some(p) = &log { debug_write(p, &format!("=== exit rc={rc} ===\n")); }
+    if let Some(p) = &log {
+        debug_write(p, &format!("=== exit rc={rc} ===\n"));
+    }
     ExitCode::from(rc as u8)
 }
