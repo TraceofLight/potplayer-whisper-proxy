@@ -23,8 +23,14 @@ jobs:
       - name: Format check
         run: cargo fmt --all --check
 
+      # installer가 `include_bytes!("../../target/release/main64.exe")`로
+      # proxy 산출물을 임베드하므로, clippy/build 어떤 단계든 installer를
+      # 건드리려면 main64.exe가 먼저 존재해야 함.
+      - name: Build proxy first (produces main64.exe for installer to embed)
+        run: cargo build --release -p whisper-proxy
+
       - name: Clippy
         run: cargo clippy --release --all-targets -- -D warnings
 
-      - name: Build (release)
-        run: cargo build --release --workspace
+      - name: Build installer
+        run: cargo build --release -p whisper-proxy-installer
