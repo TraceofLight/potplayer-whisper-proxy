@@ -42,6 +42,199 @@ jobs:
       - name: Build installer (embeds main64.exe)
         run: cargo build --release -p whisper-proxy-installer
 
+      - name: Package distribution zip
+        id: pkg
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.ver.outputs.tag }}"
+          $dir = "whisper-proxy-$tag"
+          $zip = "$dir.zip"
+          New-Item -Path $dir -ItemType Directory | Out-Null
+          Copy-Item "target/release/main64.exe" -Destination $dir
+          Copy-Item "target/release/whisper-proxy-installer.exe" -Destination $dir
+
+          # ---------- Windows .bat (cmd.exe + powershell 5.x 호환) ----------
+
+          Set-Content -Path "$dir/INSTALL.bat" -Encoding ASCII -Value @'
+          @echo off
+          REM whisper-proxy installer (auto elevation)
+          REM Edit URL below to point at your Whisper API server.
+
+          setlocal
+          set "URL=http://<your-server>:<port>/v1"
+          set "TIMEOUT=1800"
+
+          REM placeholder 미수정 시 친절한 안내 후 종료
+          echo %URL% | findstr /C:"<your-server>" >nul && (
+              echo [ERROR] Edit INSTALL.bat first: replace ^<your-server^>:^<port^> with your real server.
+              echo         Open INSTALL.bat in Notepad, change the URL line, save, and re-run.
+              pause
+              exit /b 1
+          )
+
+          net session >nul 2>&1
+          if %errorLevel% neq 0 (
+              echo [INFO] Admin privileges required. Approve the UAC prompt.
+              powershell -Command "Start-Process '%~f0' -Verb RunAs"
+              exit /b
+          )
+
+          cd /d "%~dp0"
+          echo.
+          echo === whisper-proxy install ===
+          echo URL    : %URL%
+          echo Timeout: %TIMEOUT%
+          echo.
+          "%~dp0whisper-proxy-installer.exe" install --url "%URL%" --timeout "%TIMEOUT%"
+          set RC=%errorLevel%
+          echo.
+          if %RC% equ 0 (
+              echo === DONE ===
+              echo PotPlayer ^> F5 ^> Subtitles ^> Real-time Subtitle Conversion ^(Alt+W^).
+              echo Status: STATUS.bat   Rollback: UNINSTALL.bat
+          ) else (
+              echo === FAILED rc=%RC% ===
+          )
+          echo.
+          pause
+          '@
+
+          Set-Content -Path "$dir/STATUS.bat" -Encoding ASCII -Value @'
+          @echo off
+          REM whisper-proxy status check (no admin required)
+          cd /d "%~dp0"
+          "%~dp0whisper-proxy-installer.exe" status
+          echo.
+          pause
+          '@
+
+          Set-Content -Path "$dir/UNINSTALL.bat" -Encoding ASCII -Value @'
+          @echo off
+          REM whisper-proxy rollback - restores main64.orig.exe
+          setlocal
+
+          net session >nul 2>&1
+          if %errorLevel% neq 0 (
+              echo [INFO] Admin privileges required. Approve the UAC prompt.
+              powershell -Command "Start-Process '%~f0' -Verb RunAs"
+              exit /b
+          )
+
+          cd /d "%~dp0"
+          echo.
+          echo === whisper-proxy rollback ===
+          "%~dp0whisper-proxy-installer.exe" uninstall
+          set RC=%errorLevel%
+          echo.
+          if %RC% equ 0 ( echo === DONE === ) else ( echo === FAILED rc=%RC% === )
+          echo.
+          pause
+          '@
+
+          # ---------- Git Bash / WSL용 .sh (Windows 환경에서 .exe 호출) ----------
+          # admin 권한이 필요한 작업은 "Run as administrator"로 띄운 Git Bash 안에서 실행.
+
+          Set-Content -Path "$dir/install.sh" -Encoding ASCII -NoNewline -Value @"
+          #!/bin/bash
+          # whisper-proxy installer (Git Bash / WSL — run from Administrator shell)
+          set -e
+          cd "`$(dirname "`$0")"
+
+          URL="http://<your-server>:<port>/v1"
+          TIMEOUT="1800"
+
+          if [[ "`$URL" == *"<your-server>"* ]]; then
+              echo "[ERROR] Edit install.sh first: replace <your-server>:<port> with your real server."
+              read -rp "Press Enter to exit"
+              exit 1
+          fi
+
+          if ! cmd //c "net session" >/dev/null 2>&1; then
+              echo "[ERROR] Run from an Administrator shell."
+              echo "        (Right-click Git Bash / Windows Terminal -> Run as administrator)"
+              read -rp "Press Enter to exit"
+              exit 1
+          fi
+
+          echo
+          echo "=== whisper-proxy install ==="
+          echo "URL    : `$URL"
+          echo "Timeout: `$TIMEOUT"
+          echo
+          ./whisper-proxy-installer.exe install --url "`$URL" --timeout "`$TIMEOUT"
+          rc=`$?
+          echo
+          if [ `$rc -eq 0 ]; then
+              echo "=== DONE ==="
+              echo "PotPlayer > F5 > Subtitles > Real-time Subtitle Conversion (Alt+W)"
+              echo "Status: ./status.sh   Rollback: ./uninstall.sh"
+          else
+              echo "=== FAILED rc=`$rc ==="
+          fi
+          echo
+          read -rp "Press Enter to continue"
+          "@
+
+          Set-Content -Path "$dir/status.sh" -Encoding ASCII -NoNewline -Value @"
+          #!/bin/bash
+          # whisper-proxy status check (no admin required)
+          cd "`$(dirname "`$0")"
+          ./whisper-proxy-installer.exe status
+          echo
+          read -rp "Press Enter to continue"
+          "@
+
+          Set-Content -Path "$dir/uninstall.sh" -Encoding ASCII -NoNewline -Value @"
+          #!/bin/bash
+          # whisper-proxy rollback (Git Bash / WSL — run from Administrator shell)
+          set -e
+          cd "`$(dirname "`$0")"
+
+          if ! cmd //c "net session" >/dev/null 2>&1; then
+              echo "[ERROR] Run from an Administrator shell."
+              read -rp "Press Enter to exit"
+              exit 1
+          fi
+
+          echo
+          echo "=== whisper-proxy rollback ==="
+          ./whisper-proxy-installer.exe uninstall
+          rc=`$?
+          echo
+          if [ `$rc -eq 0 ]; then echo "=== DONE ==="; else echo "=== FAILED rc=`$rc ==="; fi
+          echo
+          read -rp "Press Enter to continue"
+          "@
+
+          Set-Content -Path "$dir/README.txt" -Encoding ASCII -Value @'
+          whisper-proxy
+          =============
+
+          QUICK START (Windows, double-click)
+            1. Open INSTALL.bat in Notepad.
+            2. Replace <your-server>:<port> in the URL line with your Whisper API server.
+            3. Save, then double-click INSTALL.bat (UAC will prompt for admin).
+            4. In PotPlayer: F5 > Subtitles > Real-time Subtitle Conversion (Alt+W).
+
+          GIT BASH / WSL (run from Administrator shell)
+            ./install.sh   - install (after editing URL inside the script)
+            ./status.sh    - check installation state
+            ./uninstall.sh - restore original main64.exe
+
+          BAT FILES (cmd.exe / Windows Explorer)
+            INSTALL.bat    - install with auto-elevation
+            STATUS.bat     - check installation state
+            UNINSTALL.bat  - rollback with auto-elevation
+
+          The installer.exe also works directly:
+            whisper-proxy-installer.exe install --url http://your-server:port/v1
+
+          See https://github.com/${{ github.repository }} for details.
+          '@
+
+          Compress-Archive -Path $dir -DestinationPath $zip -Force
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -51,5 +244,6 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
+            ${{ steps.pkg.outputs.zip }}
             target/release/main64.exe
             target/release/whisper-proxy-installer.exe

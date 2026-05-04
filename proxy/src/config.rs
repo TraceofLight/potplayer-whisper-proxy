@@ -73,10 +73,10 @@ pub fn load(base_dir: &Path) -> Config {
     if let Ok(v) = env::var("WHISPER_PROXY_MODEL") {
         cfg.model = v;
     }
-    if let Ok(v) = env::var("WHISPER_PROXY_TIMEOUT") {
-        if let Ok(n) = v.parse() {
-            cfg.timeout = n;
-        }
+    if let Ok(v) = env::var("WHISPER_PROXY_TIMEOUT")
+        && let Ok(n) = v.parse()
+    {
+        cfg.timeout = n;
     }
     cfg
 }

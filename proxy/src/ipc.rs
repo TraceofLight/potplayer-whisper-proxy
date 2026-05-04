@@ -297,7 +297,7 @@ pub fn run(ipc_name: &str) -> i32 {
 
     use std::ptr::null_mut;
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn ReadFile(
             h: HANDLE,
             buf: *mut u8,
@@ -336,11 +336,7 @@ pub fn run(ipc_name: &str) -> i32 {
                 null_mut(),
             )
         };
-        if ok == 0 {
-            0
-        } else {
-            avail
-        }
+        if ok == 0 { 0 } else { avail }
     };
     let read_exact = |out: &mut [u8]| -> std::io::Result<()> {
         let mut got = 0;
