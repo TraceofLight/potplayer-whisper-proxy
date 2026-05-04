@@ -12,12 +12,14 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
-use serde_json::Value;
-
+mod config;
+mod whisper_client;
 #[cfg(windows)]
 mod ipc;
+
+use config::Config;
+use whisper_client::{Segment, TranscribeRequest};
 
 // ---------- args ----------
 
@@ -66,11 +68,6 @@ fn parse_args(raw: Vec<String>) -> Args {
     let mut i = 0;
     while i < raw.len() {
         let arg = &raw[i];
-        let take_val = || -> Option<String> {
-            // closure that won't move i; we'll peek manually below
-            None::<String>
-        };
-        let _ = take_val;
         match arg.as_str() {
             "-h" | "--help" => a.help = true,
             "-f" | "--file" => {
@@ -116,100 +113,11 @@ fn parse_args(raw: Vec<String>) -> Args {
     a
 }
 
-// ---------- config ----------
-
-#[derive(Debug, Clone)]
-struct Config {
-    url: String,
-    api_key: String,
-    model: String,
-    timeout: u64,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            url: "http://localhost:8000/v1".to_string(),
-            api_key: String::new(),
-            model: "Systran/faster-whisper-large-v3".to_string(),
-            timeout: 120,
-        }
-    }
-}
-
 fn base_dir() -> PathBuf {
     env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn parse_ini(text: &str, cfg: &mut Config) {
-    let mut in_server = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_server = line.eq_ignore_ascii_case("[server]");
-            continue;
-        }
-        if !in_server { continue; }
-        let Some(eq) = line.find('=') else { continue; };
-        let k = line[..eq].trim().to_ascii_lowercase();
-        let v = line[eq+1..].trim().to_string();
-        match k.as_str() {
-            "url" => cfg.url = v,
-            "api_key" => cfg.api_key = v,
-            "model" => cfg.model = v,
-            "timeout" => { if let Ok(n) = v.parse() { cfg.timeout = n; } }
-            _ => {}
-        }
-    }
-}
-
-fn load_config() -> Config {
-    let mut cfg = Config::default();
-    let ini = base_dir().join("whisper-proxy.ini");
-    if let Ok(text) = fs::read_to_string(&ini) {
-        parse_ini(&text, &mut cfg);
-    }
-    if let Ok(v) = env::var("WHISPER_PROXY_URL")     { cfg.url = v; }
-    if let Ok(v) = env::var("WHISPER_PROXY_KEY")     { cfg.api_key = v; }
-    if let Ok(v) = env::var("WHISPER_PROXY_MODEL")   { cfg.model = v; }
-    if let Ok(v) = env::var("WHISPER_PROXY_TIMEOUT") {
-        if let Ok(n) = v.parse() { cfg.timeout = n; }
-    }
-    cfg
-}
-
-// ---------- multipart ----------
-
-fn multipart(boundary: &str, fields: &[(&str, &str)], file_name: &str, file_bytes: &[u8], mime: &str) -> Vec<u8> {
-    let mut body = Vec::with_capacity(file_bytes.len() + 1024);
-    for (k, v) in fields {
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(format!("Content-Disposition: form-data; name=\"{k}\"\r\n\r\n").as_bytes());
-        body.extend_from_slice(v.as_bytes());
-        body.extend_from_slice(b"\r\n");
-    }
-    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(format!(
-        "Content-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n"
-    ).as_bytes());
-    body.extend_from_slice(format!("Content-Type: {mime}\r\n\r\n").as_bytes());
-    body.extend_from_slice(file_bytes);
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-    body
-}
-
-fn make_boundary() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ns = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let pid = std::process::id();
-    format!("----whisperproxy{ns:032x}{pid:08x}")
 }
 
 // ---------- formatting ----------
@@ -226,9 +134,6 @@ fn fmt_ts(seconds: f64, comma: bool) -> String {
 }
 
 // ---------- output writers ----------
-
-#[derive(Debug, Clone)]
-struct Segment { start: f64, end: f64, text: String }
 
 fn write_outputs(args: &Args, segs: &[Segment], full_text: &str, lang: &str) -> std::io::Result<()> {
     let Some(prefix) = &args.output_prefix else { return Ok(()); };
@@ -327,72 +232,27 @@ fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
         .unwrap_or_else(|| "audio.wav".into());
     let mime = guess_mime(audio_path);
 
-    let mut fields: Vec<(&str, String)> = Vec::with_capacity(4);
-    fields.push(("model", cfg.model.clone()));
-    fields.push(("response_format", "verbose_json".into()));
-    if let Some(l) = &args.language {
-        if l != "auto" && !l.is_empty() {
-            fields.push(("language", l.clone()));
-        }
-    }
-    if let Some(p) = &args.prompt { fields.push(("prompt", p.clone())); }
-
-    let endpoint = if args.translate {
-        format!("{}/audio/translations", cfg.url.trim_end_matches('/'))
-    } else {
-        format!("{}/audio/transcriptions", cfg.url.trim_end_matches('/'))
+    let req = TranscribeRequest {
+        file_name: &file_name,
+        file_bytes: &bytes,
+        mime,
+        language: args.language.as_deref(),
+        prompt: args.prompt.as_deref(),
+        translate: args.translate,
     };
 
-    let boundary = make_boundary();
-    let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let body = multipart(&boundary, &field_refs, &file_name, &bytes, mime);
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(cfg.timeout))
-        .build();
-    let mut req = agent
-        .post(&endpoint)
-        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"));
-    if !cfg.api_key.is_empty() {
-        req = req.set("Authorization", &format!("Bearer {}", cfg.api_key));
-    }
-
-    let resp_text = match req.send_bytes(&body) {
-        Ok(r) => match r.into_string() { Ok(s) => s, Err(e) => { eprintln!("whisper-proxy: read body: {e}"); return 4; } },
-        Err(ureq::Error::Status(code, r)) => {
-            let body = r.into_string().unwrap_or_default();
-            eprintln!("whisper-proxy: HTTP {code}: {body}");
-            return 2;
-        }
-        Err(e) => { eprintln!("whisper-proxy: request failed: {e}"); return 3; }
-    };
-
-    let v: Value = match serde_json::from_str(&resp_text) {
-        Ok(v) => v,
+    let result = match whisper_client::transcribe(cfg, &req) {
+        Ok(r) => r,
         Err(e) => {
-            eprintln!("whisper-proxy: non-JSON response: {e} -- {}",
-                resp_text.chars().take(200).collect::<String>());
-            return 4;
+            eprintln!("whisper-proxy: {e}");
+            // HTTP error → 2, request error → 3, body/JSON 파싱 → 4
+            return if e.starts_with("HTTP ") { 2 }
+                   else if e.starts_with("request failed") { 3 }
+                   else { 4 };
         }
     };
 
-    let mut segs: Vec<Segment> = Vec::new();
-    if let Some(arr) = v.get("segments").and_then(|s| s.as_array()) {
-        for seg in arr {
-            let start = seg.get("start").and_then(|x| x.as_f64()).unwrap_or(0.0);
-            let end   = seg.get("end").and_then(|x| x.as_f64()).unwrap_or(0.0);
-            let text  = seg.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            segs.push(Segment { start, end, text });
-        }
-    }
-    if segs.is_empty() {
-        if let Some(t) = v.get("text").and_then(|x| x.as_str()) {
-            if !t.is_empty() {
-                segs.push(Segment { start: 0.0, end: 0.0, text: t.to_string() });
-            }
-        }
-    }
-
+    let mut segs = result.segments;
     if args.offset_ms != 0 {
         let off = args.offset_ms as f64 / 1000.0;
         for s in segs.iter_mut() {
@@ -401,15 +261,9 @@ fn transcribe_one(audio_path: &str, args: &Args, cfg: &Config) -> i32 {
         }
     }
 
-    let full_text = v.get("text")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ")
-        });
-    let lang = v.get("language")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
+    let full_text = result.full_text;
+    let lang = result
+        .language
         .or(args.language.clone())
         .unwrap_or_else(|| "auto".into());
 
@@ -500,7 +354,7 @@ fn main() -> ExitCode {
         print_help();
         return ExitCode::from(0);
     }
-    let cfg = load_config();
+    let cfg = config::load(&base_dir());
     if let Some(p) = &log {
         debug_write(p, &format!(
             "config: url={} model={} timeout={}s key_set={}",

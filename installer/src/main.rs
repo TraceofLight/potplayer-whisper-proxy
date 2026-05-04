@@ -95,10 +95,20 @@ fn can_write_to(dir: &Path) -> bool {
 
 // ---------- install / uninstall / status ----------
 
+// "main64.exe" → "main64.orig.exe", "foo" → "foo.orig" (확장자 무관 안전)
+fn orig_path(engine_dir: &Path, name: &str) -> PathBuf {
+    let p = Path::new(name);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    match p.extension().and_then(|e| e.to_str()) {
+        Some(ext) => engine_dir.join(format!("{stem}.orig.{ext}")),
+        None => engine_dir.join(format!("{stem}.orig")),
+    }
+}
+
 fn install_engine(engine_dir: &Path, ini_text: &str) -> std::io::Result<()> {
     for name in ["main64.exe", "main.exe"] {
         let live = engine_dir.join(name);
-        let orig = engine_dir.join(name.replace(".exe", ".orig.exe"));
+        let orig = orig_path(engine_dir, name);
         // 백업: 라이브 파일이 우리 바이너리가 아니고, 백업이 아직 없을 때만
         if live.exists() && !orig.exists() {
             // 우리가 이미 설치한 게 아닌지 시그니처 체크
@@ -141,7 +151,7 @@ fn is_our_binary(path: &Path) -> std::io::Result<bool> {
 fn uninstall_engine(engine_dir: &Path) -> std::io::Result<()> {
     for name in ["main64.exe", "main.exe"] {
         let live = engine_dir.join(name);
-        let orig = engine_dir.join(name.replace(".exe", ".orig.exe"));
+        let orig = orig_path(engine_dir, name);
         if orig.exists() {
             // live는 우리 게여야만 덮어씀 (사용자가 수동 변경했을 수 있음)
             if !live.exists() || is_our_binary(&live)? {
@@ -167,7 +177,7 @@ fn status_engine(engine_dir: &Path) {
     println!("  {}:", engine_dir.display());
     for name in ["main64.exe", "main.exe"] {
         let live = engine_dir.join(name);
-        let orig = engine_dir.join(name.replace(".exe", ".orig.exe"));
+        let orig = orig_path(engine_dir, name);
         let ours = live.exists() && is_our_binary(&live).unwrap_or(false);
         let backed_up = orig.exists();
         let mark = if ours && backed_up { "INSTALLED (backup OK)" }
@@ -195,7 +205,6 @@ fn status_engine(engine_dir: &Path) {
 
 // ---------- args ----------
 
-#[derive(Default)]
 struct Cli {
     cmd: String,
     engine: String,                 // "Vulkan" | "CPU" | "all"
@@ -206,9 +215,22 @@ struct Cli {
     timeout: Option<String>,
 }
 
+impl Default for Cli {
+    fn default() -> Self {
+        Cli {
+            cmd: String::new(),
+            engine: "all".into(),
+            potplayer_dir: None,
+            url: None,
+            model: None,
+            api_key: None,
+            timeout: None,
+        }
+    }
+}
+
 fn parse_cli(args: Vec<String>) -> Cli {
     let mut cli = Cli::default();
-    cli.engine = "all".into();
     let mut it = args.into_iter();
     if let Some(c) = it.next() { cli.cmd = c; }
     while let Some(a) = it.next() {
@@ -219,6 +241,9 @@ fn parse_cli(args: Vec<String>) -> Cli {
             "--model"         => { cli.model         = it.next(); }
             "--api-key"       => { cli.api_key       = it.next(); }
             "--timeout"       => { cli.timeout       = it.next(); }
+            other if other.starts_with("--") => {
+                eprintln!("warning: unknown flag '{other}' ignored (typo? — see USAGE)");
+            }
             _ => {}
         }
     }

@@ -33,6 +33,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
 };
 
+use crate::config::Config;
+use crate::whisper_client::{self, TranscribeRequest};
+
 type BOOL = i32;
 
 // ---------- helpers ----------
@@ -101,57 +104,6 @@ impl Logger {
     }
 }
 
-// ---------- config ----------
-
-struct IpcConfig {
-    url: String,
-    api_key: String,
-    model: String,
-    timeout: u64,
-}
-
-fn load_config(base_dir: &Path) -> IpcConfig {
-    let mut cfg = IpcConfig {
-        url: "http://localhost:8000/v1".to_string(),
-        api_key: String::new(),
-        model: "Systran/faster-whisper-large-v3".to_string(),
-        timeout: 120,
-    };
-    let ini = base_dir.join("whisper-proxy.ini");
-    if let Ok(text) = std::fs::read_to_string(&ini) {
-        // strip UTF-8 BOM (PowerShell `Set-Content -Encoding UTF8` adds one)
-        let text = text.trim_start_matches('\u{feff}');
-        let mut in_server = false;
-        for raw in text.lines() {
-            let line = raw.trim().trim_start_matches('\u{feff}');
-            if line.is_empty() || line.starts_with(';') || line.starts_with('#') { continue; }
-            if line.starts_with('[') && line.ends_with(']') {
-                in_server = line.eq_ignore_ascii_case("[server]");
-                continue;
-            }
-            if !in_server { continue; }
-            if let Some(eq) = line.find('=') {
-                let k = line[..eq].trim().to_ascii_lowercase();
-                let v = line[eq+1..].trim().to_string();
-                match k.as_str() {
-                    "url" => cfg.url = v,
-                    "api_key" => cfg.api_key = v,
-                    "model" => cfg.model = v,
-                    "timeout" => { if let Ok(n) = v.parse() { cfg.timeout = n; } }
-                    _ => {}
-                }
-            }
-        }
-    }
-    if let Ok(v) = env::var("WHISPER_PROXY_URL")     { cfg.url = v; }
-    if let Ok(v) = env::var("WHISPER_PROXY_KEY")     { cfg.api_key = v; }
-    if let Ok(v) = env::var("WHISPER_PROXY_MODEL")   { cfg.model = v; }
-    if let Ok(v) = env::var("WHISPER_PROXY_TIMEOUT") {
-        if let Ok(n) = v.parse() { cfg.timeout = n; }
-    }
-    cfg
-}
-
 // ---------- WAV / API ----------
 
 fn make_wav_f32_mono_16k(samples_bytes: &[u8]) -> Vec<u8> {
@@ -180,67 +132,31 @@ fn make_wav_f32_mono_16k(samples_bytes: &[u8]) -> Vec<u8> {
     w
 }
 
-#[derive(Debug)]
-struct ApiSegment { start: f64, end: f64, text: String }
-
-fn transcribe_via_api(cfg: &IpcConfig, wav: &[u8], language: &str) -> std::io::Result<Vec<ApiSegment>> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ns = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let pid = std::process::id();
-    let boundary = format!("----whisperproxyrt{ns:032x}{pid:08x}");
-
-    let mut body = Vec::with_capacity(wav.len() + 1024);
-    let push_field = |body: &mut Vec<u8>, name: &str, value: &str| {
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes());
-        body.extend_from_slice(value.as_bytes());
-        body.extend_from_slice(b"\r\n");
+// 실시간 chunk → API 호출. 공통 whisper_client::transcribe wrapping.
+// 빈 텍스트 segment는 자막 노이즈가 되므로 여기서 한 번 더 거른다.
+fn transcribe_chunk(cfg: &Config, wav: &[u8], language: &str) -> Result<Vec<whisper_client::Segment>, String> {
+    let req = TranscribeRequest {
+        file_name: "chunk.wav",
+        file_bytes: wav,
+        mime: "audio/wav",
+        language: if language.is_empty() { None } else { Some(language) },
+        prompt: None,
+        translate: false,
     };
-    push_field(&mut body, "model", &cfg.model);
-    push_field(&mut body, "response_format", "verbose_json");
-    if !language.is_empty() && language != "auto" {
-        push_field(&mut body, "language", language);
-    }
-    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"chunk.wav\"\r\n");
-    body.extend_from_slice(b"Content-Type: audio/wav\r\n\r\n");
-    body.extend_from_slice(wav);
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-
-    let url = format!("{}/audio/transcriptions", cfg.url.trim_end_matches('/'));
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(cfg.timeout))
-        .build();
-    let mut req = agent.post(&url)
-        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"));
-    if !cfg.api_key.is_empty() {
-        req = req.set("Authorization", &format!("Bearer {}", cfg.api_key));
-    }
-
-    let resp = req.send_bytes(&body)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-    let resp_text = resp.into_string()?;
-    let v: serde_json::Value = serde_json::from_str(&resp_text)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-
-    let mut segs = Vec::new();
-    if let Some(arr) = v.get("segments").and_then(|s| s.as_array()) {
-        for seg in arr {
-            let start = seg.get("start").and_then(|x| x.as_f64()).unwrap_or(0.0);
-            let end = seg.get("end").and_then(|x| x.as_f64()).unwrap_or(0.0);
-            let text = seg.get("text").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-            if !text.is_empty() {
-                segs.push(ApiSegment { start, end, text });
-            }
-        }
-    }
+    let result = whisper_client::transcribe(cfg, &req)?;
+    let mut segs: Vec<whisper_client::Segment> = result
+        .segments
+        .into_iter()
+        .map(|mut s| {
+            s.text = s.text.trim().to_string();
+            s
+        })
+        .filter(|s| !s.text.is_empty())
+        .collect();
     if segs.is_empty() {
-        if let Some(t) = v.get("text").and_then(|x| x.as_str()) {
-            let t = t.trim();
-            if !t.is_empty() {
-                segs.push(ApiSegment { start: 0.0, end: 0.0, text: t.to_string() });
-            }
+        let t = result.full_text.trim().to_string();
+        if !t.is_empty() {
+            segs.push(whisper_client::Segment { start: 0.0, end: 0.0, text: t });
         }
     }
     Ok(segs)
@@ -259,8 +175,22 @@ fn transcribe_via_api(cfg: &IpcConfig, wav: &[u8], language: &str) -> std::io::R
 // before it starts sending audio.
 
 const FRAME_MAGIC: u32 = 0x11111111;
+
+// PotPlayer → 우리 (request)
+const FRAME_LOAD_MODEL: u32 = 0x10;
+const FRAME_CONVERT: u32 = 0x20;
+const FRAME_AUDIO: u32 = 0x21;
+
+// 우리 → PotPlayer (response)
 const FRAME_LOG: u32 = 0x10000;
 const FRAME_READY: u32 = 0x11;
+const FRAME_CONVERT_END: u32 = 0x22;
+const FRAME_SEGMENT_TIMING: u32 = 0x20000;
+const FRAME_SEGMENT_TEXT: u32 = 0x20001;
+
+// 영상 SEEK 감지: 인접 chunk의 ts_ms 차이가 이 임계값 이상이면 새 위치로 간주.
+// 너무 작으면 정상 chunk 진행도 SEEK으로 오인, 너무 크면 짧은 jump 놓침.
+const SEEK_THRESHOLD_MS: i64 = 10_000;
 
 const INIT_LOG_LINES: &[&str] = &[
     "whisper_init_from_file_with_params_no_state: loading model from '<remote API>'",
@@ -337,7 +267,7 @@ pub fn run(ipc_name: &str) -> i32 {
     };
     log.line(&format!("=== serve start, pipe={ipc_name} pid={}", std::process::id()));
 
-    let cfg = load_config(&dir);
+    let cfg = crate::config::load(&dir);
     log.line(&format!("config: url={} model={} timeout={}", cfg.url, cfg.model, cfg.timeout));
 
     let pot_pipe = format!("\\\\.\\pipe\\{ipc_name}");
@@ -414,8 +344,8 @@ pub fn run(ipc_name: &str) -> i32 {
         Ok(v) => v,
         Err(e) => { log.line(&format!("read LOAD_MODEL: {e}")); return 42; }
     };
-    if code != 0x10 {
-        log.line(&format!("expected LOAD_MODEL (0x10), got 0x{code:x}"));
+    if code != FRAME_LOAD_MODEL {
+        log.line(&format!("expected LOAD_MODEL (0x{FRAME_LOAD_MODEL:x}), got 0x{code:x}"));
         return 43;
     }
     log.line(&format!("LOAD_MODEL body len={}", body.len()));
@@ -480,7 +410,7 @@ pub fn run(ipc_name: &str) -> i32 {
                     Vec::new()
                 } else {
                     let wav = make_wav_f32_mono_16k(&job.audio);
-                    let segs = match transcribe_via_api(&cfg_arc, &wav, &job.language) {
+                    let segs = match transcribe_chunk(&cfg_arc, &wav, &job.language) {
                         Ok(s) => s,
                         Err(e) => {
                             log_arc.line(&format!("  [w{wi}] API err: {e}"));
@@ -520,13 +450,13 @@ pub fn run(ipc_name: &str) -> i32 {
                     t[4..8].copy_from_slice(&job.flag.to_le_bytes());
                     t[8..16].copy_from_slice(&start_ms.to_le_bytes());
                     t[16..24].copy_from_slice(&end_ms.to_le_bytes());
-                    frames.push((0x20000, t));
+                    frames.push((FRAME_SEGMENT_TIMING, t));
                     let mut text = seg.text.clone().into_bytes();
                     text.push(0);
-                    frames.push((0x20001, text));
+                    frames.push((FRAME_SEGMENT_TEXT, text));
                 }
                 let lang_pair = format!("{}/{}\0", job.language, job.language);
-                frames.push((0x22, lang_pair.into_bytes()));
+                frames.push((FRAME_CONVERT_END, lang_pair.into_bytes()));
                 if resp_tx.send(frames).is_err() { break; }
             }
         });
@@ -567,7 +497,7 @@ pub fn run(ipc_name: &str) -> i32 {
                 Ok(v) => v,
                 Err(e) => { log_arc.line(&format!("read frame end: {e}")); break; }
             };
-            if code == 0x20 {
+            if code == FRAME_CONVERT {
                 if body.len() < 44 { continue; }
                 let lang_end = body[..32].iter().position(|&b| b == 0).unwrap_or(32);
                 let language = String::from_utf8_lossy(&body[..lang_end]).to_string();
@@ -586,7 +516,7 @@ pub fn run(ipc_name: &str) -> i32 {
                 let prev_ts = latest_ts.load(std::sync::atomic::Ordering::Relaxed);
                 if prev_ts != 0 {
                     let delta = (ts_ms as i64 - prev_ts as i64).abs();
-                    if delta > 10_000 {
+                    if delta > SEEK_THRESHOLD_MS {
                         let old = seek_epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         log_arc.line(&format!("  SEEK detected: prev_ts={prev_ts} new_ts={ts_ms} epoch {} -> {}",
                             old, old + 1));
@@ -598,8 +528,8 @@ pub fn run(ipc_name: &str) -> i32 {
                     Ok(v) => v,
                     Err(e) => { log_arc.line(&format!("read audio: {e}")); break; }
                 };
-                if code2 != 0x21 {
-                    log_arc.line(&format!("expected audio (0x21), got 0x{code2:x}"));
+                if code2 != FRAME_AUDIO {
+                    log_arc.line(&format!("expected audio (0x{FRAME_AUDIO:x}), got 0x{code2:x}"));
                     continue;
                 }
                 log_arc.line(&format!(
