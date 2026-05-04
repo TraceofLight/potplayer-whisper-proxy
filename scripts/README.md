@@ -54,9 +54,9 @@ curl http://127.0.0.1:18001/health
 curl "http://127.0.0.1:18001/v1/models" | jq .
 ```
 
-## SSH 터널 (사외 접속 시)
+## SSH 터널 (외부 접속 시)
 
-서버를 사내망에서만 노출하고 wrapper는 사용자 PC에서 SSH 터널로 쓰는 패턴:
+서버를 내부 네트워크에서만 노출하고 wrapper는 사용자 PC에서 SSH 터널로 쓰는 패턴:
 
 ```bash
 # 사용자 PC에서:

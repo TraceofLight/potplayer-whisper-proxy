@@ -18,8 +18,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use winreg::enums::*;
 use winreg::RegKey;
+use winreg::enums::*;
 
 // 컴파일 타임에 proxy 바이너리/ini 템플릿을 임베드.
 const PROXY_BIN: &[u8] = include_bytes!("../../target/release/main64.exe");
@@ -49,10 +49,10 @@ fn from_app_paths(view: u32, exe_name: &str) -> Option<PathBuf> {
 fn discover_potplayer() -> Option<PathBuf> {
     for view in [KEY_WOW64_32KEY, KEY_WOW64_64KEY, 0] {
         for exe in ["PotPlayer.exe", "PotPlayerMini.exe", "PotPlayerMini64.exe"] {
-            if let Some(p) = from_app_paths(view, exe) {
-                if p.join("Module").join("Whisper").is_dir() {
-                    return Some(p);
-                }
+            if let Some(p) = from_app_paths(view, exe)
+                && p.join("Module").join("Whisper").is_dir()
+            {
+                return Some(p);
             }
         }
     }
@@ -80,10 +80,8 @@ fn list_engines(potplayer: &Path) -> Vec<String> {
         if p.is_dir() {
             // engine 폴더는 main64.exe 또는 .orig 백업이 있어야 인정
             let has_main = p.join("main64.exe").exists() || p.join("main64.orig.exe").exists();
-            if has_main {
-                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                    out.push(name.to_string());
-                }
+            if has_main && let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                out.push(name.to_string());
             }
         }
     }

@@ -5,8 +5,8 @@ members = ["proxy", "installer"]
 # workflow를 위한 메타 데이터
 # .github/workflows/release.yml이 이 version을 읽어 tag로 사용.
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
 
 [profile.release]
 opt-level = "z"

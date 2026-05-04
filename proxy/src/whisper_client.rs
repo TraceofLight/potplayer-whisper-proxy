@@ -210,16 +210,15 @@ pub fn transcribe(cfg: &Config, req: &TranscribeRequest<'_>) -> Result<Transcrib
             segments.push(Segment { start, end, text });
         }
     }
-    if segments.is_empty() {
-        if let Some(t) = v.get("text").and_then(|x| x.as_str()) {
-            if !t.is_empty() {
-                segments.push(Segment {
-                    start: 0.0,
-                    end: 0.0,
-                    text: t.to_string(),
-                });
-            }
-        }
+    if segments.is_empty()
+        && let Some(t) = v.get("text").and_then(|x| x.as_str())
+        && !t.is_empty()
+    {
+        segments.push(Segment {
+            start: 0.0,
+            end: 0.0,
+            text: t.to_string(),
+        });
     }
 
     let full_text = v

@@ -1,6 +1,6 @@
-# whisper-proxy-rs
+# potplayer-whisper-proxy
 
-PotPlayer의 실시간 자막 변환(Whisper) 기능을 사내 GPU 서버로 우회시키는 도구.
+PotPlayer의 실시간 자막 변환(Whisper) 기능을 원격 GPU 서버로 우회시키는 도구.
 저사양 PC에서도 large-v3 한국어 STT 사용 가능.
 
 ```
@@ -9,12 +9,13 @@ PotPlayer의 실시간 자막 변환(Whisper) 기능을 사내 GPU 서버로 우
 
 ## 산출물
 
-| 바이너리 | 크기 | 역할 |
+| 바이너리 / 패키지 | 크기 | 역할 |
 |---------|------|------|
 | `main64.exe` | ~1.5 MB | whisper.cpp `main(64).exe` 드롭인 대체 |
 | `whisper-proxy-installer.exe` | ~1.6 MB | PotPlayer 자동 탐색 + 설치/롤백 (위 바이너리 임베드) |
+| `whisper-proxy-vX.Y.Z.zip` | ~1.6 MB | 바이너리 + 설치 스크립트 + README |
 
-미리 빌드된 바이너리는 [Releases](../../releases) 페이지에서 다운로드.
+미리 빌드된 바이너리/zip은 [Releases](../../releases) 페이지에서 다운로드.
 
 ## 빌드 (소스에서)
 
@@ -27,7 +28,23 @@ cargo build --release -p whisper-proxy-installer  # installer (proxy 임베드)
 
 ## 배포 / 사용
 
-### 사용자 PC에 설치 (관리자 PowerShell)
+### 옵션 1: zip 패키지 (권장 — 비개발자도 사용 가능)
+
+1. [Releases](../../releases)에서 `whisper-proxy-vX.Y.Z.zip` 다운로드 후 압축 해제
+2. **`INSTALL.bat`** (또는 `install.sh`)을 메모장으로 열어 `URL` 줄을 본인 Whisper API 주소로 수정
+   ```bat
+   set "URL=http://192.168.0.12:18001/v1"
+   ```
+   placeholder(`<your-server>:<port>`) 그대로 실행하면 안내 메시지 후 종료됩니다.
+3. 더블클릭 (Windows) 또는 admin Git Bash에서 `./install.sh` 실행 → UAC 승인 → 완료
+
+| 환경 | 파일 | 비고 |
+|------|------|------|
+| Windows 더블클릭 | `INSTALL.bat` / `STATUS.bat` / `UNINSTALL.bat` | cmd.exe + Windows 기본 PowerShell 5.x로 동작. UAC 자동 elevation |
+| Git Bash / WSL | `install.sh` / `status.sh` / `uninstall.sh` | "Run as administrator"로 띄운 shell에서 실행 |
+| `README.txt` | — | 위 절차 요약 (zip 안에 동봉) |
+
+### 옵션 2: 명령행 직접 실행 (개발자용 / 자동화)
 
 ```powershell
 .\whisper-proxy-installer.exe install --url http://<your-whisper-server>:<port>/v1
@@ -132,5 +149,5 @@ potplayer-whisper-proxy/
 |------|------------|
 | 자막이 안 뜸 | `whisper-proxy-installer.exe status`로 INSTALLED 확인 → ini의 url 확인 |
 | 영상 재생이 끊김 | ini의 `timeout = 1800` 이상으로 |
-| `connection refused` | API 서버 다운 또는 사내망 접근 불가 |
+| `connection refused` | API 서버 다운 또는 네트워크 접근 불가 |
 | seek 후 자막 안 따라옴 | 최신 빌드인지 확인 (seek epoch 추적은 v1.0+ 적용) |
