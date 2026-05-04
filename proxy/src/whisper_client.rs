@@ -60,9 +60,10 @@ pub fn transcribe(cfg: &Config, req: &TranscribeRequest<'_>) -> Result<Transcrib
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(cfg.timeout))
         .build();
-    let mut http_req = agent
-        .post(&endpoint)
-        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"));
+    let mut http_req = agent.post(&endpoint).set(
+        "Content-Type",
+        &format!("multipart/form-data; boundary={boundary}"),
+    );
     if !cfg.api_key.is_empty() {
         http_req = http_req.set("Authorization", &format!("Bearer {}", cfg.api_key));
     }
@@ -75,9 +76,7 @@ pub fn transcribe(cfg: &Config, req: &TranscribeRequest<'_>) -> Result<Transcrib
         e => format!("request failed: {e}"),
     })?;
 
-    let resp_text = resp
-        .into_string()
-        .map_err(|e| format!("read body: {e}"))?;
+    let resp_text = resp.into_string().map_err(|e| format!("read body: {e}"))?;
     let v: Value = serde_json::from_str(&resp_text).map_err(|e| {
         format!(
             "non-JSON response: {e} -- {}",

@@ -36,6 +36,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 use crate::config::Config;
 use crate::whisper_client::{self, TranscribeRequest};
 
+#[allow(clippy::upper_case_acronyms)] // Win32 표준 타입명 그대로 유지
 type BOOL = i32;
 
 // ---------- helpers ----------
@@ -94,7 +95,10 @@ struct Logger {
 impl Logger {
     fn new(path: &Path) -> std::io::Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(Logger { file: Mutex::new(file), started: Instant::now() })
+        Ok(Logger {
+            file: Mutex::new(file),
+            started: Instant::now(),
+        })
     }
     fn line(&self, msg: &str) {
         let ms = self.started.elapsed().as_millis();
@@ -134,12 +138,20 @@ fn make_wav_f32_mono_16k(samples_bytes: &[u8]) -> Vec<u8> {
 
 // 실시간 chunk → API 호출. 공통 whisper_client::transcribe wrapping.
 // 빈 텍스트 segment는 자막 노이즈가 되므로 여기서 한 번 더 거른다.
-fn transcribe_chunk(cfg: &Config, wav: &[u8], language: &str) -> Result<Vec<whisper_client::Segment>, String> {
+fn transcribe_chunk(
+    cfg: &Config,
+    wav: &[u8],
+    language: &str,
+) -> Result<Vec<whisper_client::Segment>, String> {
     let req = TranscribeRequest {
         file_name: "chunk.wav",
         file_bytes: wav,
         mime: "audio/wav",
-        language: if language.is_empty() { None } else { Some(language) },
+        language: if language.is_empty() {
+            None
+        } else {
+            Some(language)
+        },
         prompt: None,
         translate: false,
     };
@@ -156,7 +168,11 @@ fn transcribe_chunk(cfg: &Config, wav: &[u8], language: &str) -> Result<Vec<whis
     if segs.is_empty() {
         let t = result.full_text.trim().to_string();
         if !t.is_empty() {
-            segs.push(whisper_client::Segment { start: 0.0, end: 0.0, text: t });
+            segs.push(whisper_client::Segment {
+                start: 0.0,
+                end: 0.0,
+                text: t,
+            });
         }
     }
     Ok(segs)
@@ -263,48 +279,102 @@ pub fn run(ipc_name: &str) -> i32 {
 
     let log = match Logger::new(&ipc_log_path()) {
         Ok(l) => Arc::new(l),
-        Err(e) => { eprintln!("ipc: log open: {e}"); return 40; }
+        Err(e) => {
+            eprintln!("ipc: log open: {e}");
+            return 40;
+        }
     };
-    log.line(&format!("=== serve start, pipe={ipc_name} pid={}", std::process::id()));
+    log.line(&format!(
+        "=== serve start, pipe={ipc_name} pid={}",
+        std::process::id()
+    ));
 
     let cfg = crate::config::load(&dir);
-    log.line(&format!("config: url={} model={} timeout={}", cfg.url, cfg.model, cfg.timeout));
+    log.line(&format!(
+        "config: url={} model={} timeout={}",
+        cfg.url, cfg.model, cfg.timeout
+    ));
 
     let pot_pipe = format!("\\\\.\\pipe\\{ipc_name}");
     let pot = match open_pipe_client(&pot_pipe) {
         Ok(f) => f,
-        Err(e) => { log.line(&format!("connect {pot_pipe}: {e}")); return 41; }
+        Err(e) => {
+            log.line(&format!("connect {pot_pipe}: {e}"));
+            return 41;
+        }
     };
     log.line(&format!("connected {pot_pipe}"));
 
     use std::ptr::null_mut;
     #[link(name = "kernel32")]
     extern "system" {
-        fn ReadFile(h: HANDLE, buf: *mut u8, n: u32, read: *mut u32, ov: *mut std::ffi::c_void) -> BOOL;
-        fn WriteFile(h: HANDLE, buf: *const u8, n: u32, written: *mut u32, ov: *mut std::ffi::c_void) -> BOOL;
-        fn PeekNamedPipe(h: HANDLE, buf: *mut u8, n: u32, read: *mut u32,
-                         total_avail: *mut u32, left_in_msg: *mut u32) -> BOOL;
+        fn ReadFile(
+            h: HANDLE,
+            buf: *mut u8,
+            n: u32,
+            read: *mut u32,
+            ov: *mut std::ffi::c_void,
+        ) -> BOOL;
+        fn WriteFile(
+            h: HANDLE,
+            buf: *const u8,
+            n: u32,
+            written: *mut u32,
+            ov: *mut std::ffi::c_void,
+        ) -> BOOL;
+        fn PeekNamedPipe(
+            h: HANDLE,
+            buf: *mut u8,
+            n: u32,
+            read: *mut u32,
+            total_avail: *mut u32,
+            left_in_msg: *mut u32,
+        ) -> BOOL;
         fn GetLastError() -> u32;
     }
     let h = pot.as_raw_handle() as HANDLE;
 
     let bytes_avail = || -> u32 {
         let mut avail: u32 = 0;
-        let ok = unsafe { PeekNamedPipe(h, null_mut(), 0, null_mut(), &mut avail as *mut u32, null_mut()) };
-        if ok == 0 { 0 } else { avail }
+        let ok = unsafe {
+            PeekNamedPipe(
+                h,
+                null_mut(),
+                0,
+                null_mut(),
+                &mut avail as *mut u32,
+                null_mut(),
+            )
+        };
+        if ok == 0 {
+            0
+        } else {
+            avail
+        }
     };
     let read_exact = |out: &mut [u8]| -> std::io::Result<()> {
         let mut got = 0;
         while got < out.len() {
             let mut n: u32 = 0;
             let ok = unsafe {
-                ReadFile(h, out[got..].as_mut_ptr(), (out.len() - got) as u32, &mut n as *mut u32, null_mut())
+                ReadFile(
+                    h,
+                    out[got..].as_mut_ptr(),
+                    (out.len() - got) as u32,
+                    &mut n as *mut u32,
+                    null_mut(),
+                )
             };
             if ok == 0 {
-                return Err(std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32));
+                return Err(std::io::Error::from_raw_os_error(
+                    unsafe { GetLastError() } as i32
+                ));
             }
             if n == 0 {
-                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "eof",
+                ));
             }
             got += n as usize;
         }
@@ -315,10 +385,18 @@ pub fn run(ipc_name: &str) -> i32 {
         while sent < buf.len() {
             let mut n: u32 = 0;
             let ok = unsafe {
-                WriteFile(h, buf[sent..].as_ptr(), (buf.len() - sent) as u32, &mut n as *mut u32, null_mut())
+                WriteFile(
+                    h,
+                    buf[sent..].as_ptr(),
+                    (buf.len() - sent) as u32,
+                    &mut n as *mut u32,
+                    null_mut(),
+                )
             };
             if ok == 0 {
-                return Err(std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32));
+                return Err(std::io::Error::from_raw_os_error(
+                    unsafe { GetLastError() } as i32
+                ));
             }
             sent += n as usize;
         }
@@ -331,21 +409,30 @@ pub fn run(ipc_name: &str) -> i32 {
         let code = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
         let blen = u32::from_le_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]) as usize;
         if magic != FRAME_MAGIC {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
-                format!("bad magic 0x{magic:x}")));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("bad magic 0x{magic:x}"),
+            ));
         }
         let mut body = vec![0u8; blen];
-        if blen > 0 { read_exact(&mut body)?; }
+        if blen > 0 {
+            read_exact(&mut body)?;
+        }
         Ok((code, body))
     };
 
     // --- LOAD_MODEL ---
     let (code, body) = match read_frame() {
         Ok(v) => v,
-        Err(e) => { log.line(&format!("read LOAD_MODEL: {e}")); return 42; }
+        Err(e) => {
+            log.line(&format!("read LOAD_MODEL: {e}"));
+            return 42;
+        }
     };
     if code != FRAME_LOAD_MODEL {
-        log.line(&format!("expected LOAD_MODEL (0x{FRAME_LOAD_MODEL:x}), got 0x{code:x}"));
+        log.line(&format!(
+            "expected LOAD_MODEL (0x{FRAME_LOAD_MODEL:x}), got 0x{code:x}"
+        ));
         return 43;
     }
     log.line(&format!("LOAD_MODEL body len={}", body.len()));
@@ -355,17 +442,28 @@ pub fn run(ipc_name: &str) -> i32 {
         log.line(&format!("send init response: {e}"));
         return 44;
     }
-    log.line(&format!("init response sent ({} bytes)", init_response.len()));
+    log.line(&format!(
+        "init response sent ({} bytes)",
+        init_response.len()
+    ));
 
     // --- worker pool ---
     use std::sync::mpsc;
     let cfg_arc = Arc::new(cfg);
     let log_arc = log.clone();
 
-    let latest_ts: Arc<std::sync::atomic::AtomicU32> = Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let seek_epoch: Arc<std::sync::atomic::AtomicU32> = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let latest_ts: Arc<std::sync::atomic::AtomicU32> =
+        Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let seek_epoch: Arc<std::sync::atomic::AtomicU32> =
+        Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-    struct Job { ts_ms: u32, flag: u32, status: u32, language: String, audio: Vec<u8> }
+    struct Job {
+        ts_ms: u32,
+        flag: u32,
+        status: u32,
+        language: String,
+        audio: Vec<u8>,
+    }
     let (job_tx, job_rx) = mpsc::channel::<Job>();
     let job_rx = Arc::new(Mutex::new(job_rx));
 
@@ -375,7 +473,10 @@ pub fn run(ipc_name: &str) -> i32 {
     // Single worker is best — PotPlayer requires response order to match request
     // order, and stale chunks are skipped via drift-from-latest_ts check.
     let n_workers = std::env::var("WHISPER_PROXY_WORKERS")
-        .ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1).max(1);
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
     log_arc.line(&format!("starting {n_workers} workers"));
 
     for wi in 0..n_workers {
@@ -405,8 +506,10 @@ pub fn run(ipc_name: &str) -> i32 {
                 let stale_pre = job.status < cur_epoch;
 
                 let segments = if stale_pre {
-                    log_arc.line(&format!("  [w{wi}] STALE-PRE skip ts={} (job.epoch={} cur={})",
-                        job.ts_ms, job.status, cur_epoch));
+                    log_arc.line(&format!(
+                        "  [w{wi}] STALE-PRE skip ts={} (job.epoch={} cur={})",
+                        job.ts_ms, job.status, cur_epoch
+                    ));
                     Vec::new()
                 } else {
                     let wav = make_wav_f32_mono_16k(&job.audio);
@@ -419,16 +522,23 @@ pub fn run(ipc_name: &str) -> i32 {
                     };
                     let cur_epoch2 = seek_epoch.load(std::sync::atomic::Ordering::Relaxed);
                     if job.status < cur_epoch2 {
-                        log_arc.line(&format!("  [w{wi}] STALE-POST drop ts={} (job.epoch={} cur={})",
-                            job.ts_ms, job.status, cur_epoch2));
+                        log_arc.line(&format!(
+                            "  [w{wi}] STALE-POST drop ts={} (job.epoch={} cur={})",
+                            job.ts_ms, job.status, cur_epoch2
+                        ));
                         Vec::new()
                     } else {
                         segs
                     }
                 };
                 let elapsed_ms = started.elapsed().as_millis();
-                log_arc.line(&format!("  [w{wi}] ts={} flag={} segs={} took={}ms",
-                    job.ts_ms, job.flag, segments.len(), elapsed_ms));
+                log_arc.line(&format!(
+                    "  [w{wi}] ts={} flag={} segs={} took={}ms",
+                    job.ts_ms,
+                    job.flag,
+                    segments.len(),
+                    elapsed_ms
+                ));
                 for (i, seg) in segments.iter().enumerate() {
                     log_arc.line(&format!(
                         "  [w{wi}]   seg{i} {:.2}-{:.2}s text={:?}",
@@ -457,7 +567,9 @@ pub fn run(ipc_name: &str) -> i32 {
                 }
                 let lang_pair = format!("{}/{}\0", job.language, job.language);
                 frames.push((FRAME_CONVERT_END, lang_pair.into_bytes()));
-                if resp_tx.send(frames).is_err() { break; }
+                if resp_tx.send(frames).is_err() {
+                    break;
+                }
             }
         });
     }
@@ -479,8 +591,12 @@ pub fn run(ipc_name: &str) -> i32 {
                         hdr[0..4].copy_from_slice(&FRAME_MAGIC.to_le_bytes());
                         hdr[4..8].copy_from_slice(&code.to_le_bytes());
                         hdr[8..12].copy_from_slice(&(body.len() as u32).to_le_bytes());
-                        if write_all(&hdr).is_err() { break; }
-                        if !body.is_empty() && write_all(body).is_err() { break; }
+                        if write_all(&hdr).is_err() {
+                            break;
+                        }
+                        if !body.is_empty() && write_all(body).is_err() {
+                            break;
+                        }
                         frame_count += 1;
                     }
                     log_arc.line(&format!("  [main] wrote {frame_count} frames"));
@@ -495,10 +611,15 @@ pub fn run(ipc_name: &str) -> i32 {
             did_work = true;
             let (code, body) = match read_frame() {
                 Ok(v) => v,
-                Err(e) => { log_arc.line(&format!("read frame end: {e}")); break; }
+                Err(e) => {
+                    log_arc.line(&format!("read frame end: {e}"));
+                    break;
+                }
             };
             if code == FRAME_CONVERT {
-                if body.len() < 44 { continue; }
+                if body.len() < 44 {
+                    continue;
+                }
                 let lang_end = body[..32].iter().position(|&b| b == 0).unwrap_or(32);
                 let language = String::from_utf8_lossy(&body[..lang_end]).to_string();
                 // CONVERT header (44B) layout:
@@ -518,18 +639,26 @@ pub fn run(ipc_name: &str) -> i32 {
                     let delta = (ts_ms as i64 - prev_ts as i64).abs();
                     if delta > SEEK_THRESHOLD_MS {
                         let old = seek_epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        log_arc.line(&format!("  SEEK detected: prev_ts={prev_ts} new_ts={ts_ms} epoch {} -> {}",
-                            old, old + 1));
+                        log_arc.line(&format!(
+                            "  SEEK detected: prev_ts={prev_ts} new_ts={ts_ms} epoch {} -> {}",
+                            old,
+                            old + 1
+                        ));
                     }
                 }
                 let status = seek_epoch.load(std::sync::atomic::Ordering::Relaxed);
 
                 let (code2, audio) = match read_frame() {
                     Ok(v) => v,
-                    Err(e) => { log_arc.line(&format!("read audio: {e}")); break; }
+                    Err(e) => {
+                        log_arc.line(&format!("read audio: {e}"));
+                        break;
+                    }
                 };
                 if code2 != FRAME_AUDIO {
-                    log_arc.line(&format!("expected audio (0x{FRAME_AUDIO:x}), got 0x{code2:x}"));
+                    log_arc.line(&format!(
+                        "expected audio (0x{FRAME_AUDIO:x}), got 0x{code2:x}"
+                    ));
                     continue;
                 }
                 log_arc.line(&format!(
@@ -537,7 +666,16 @@ pub fn run(ipc_name: &str) -> i32 {
                     audio.len()
                 ));
                 latest_ts.store(ts_ms, std::sync::atomic::Ordering::Relaxed);
-                if tx.send(Job { ts_ms, flag, status, language, audio }).is_err() {
+                if tx
+                    .send(Job {
+                        ts_ms,
+                        flag,
+                        status,
+                        language,
+                        audio,
+                    })
+                    .is_err()
+                {
                     log_arc.line("worker channel closed");
                     break;
                 }

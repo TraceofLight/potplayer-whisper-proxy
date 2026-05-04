@@ -1,0 +1,55 @@
+name: Release
+
+# 수동 trigger 전용. UI Actions 탭 → "Run workflow" 버튼.
+# version은 Cargo.toml(workspace.package.version)을 single source of truth로 읽음.
+# 절차: Cargo.toml의 version 수정 → commit/push → 이 workflow 실행.
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark as pre-release?'
+        type: boolean
+        default: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # release/tag 생성 + asset 업로드 위해 필요
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Read version from Cargo.toml
+        id: ver
+        shell: bash
+        run: |
+          V=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$V" ]; then
+            echo "::error::failed to extract version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$V"     >> "$GITHUB_OUTPUT"
+          echo "tag=v$V"        >> "$GITHUB_OUTPUT"
+          echo "Building release for v$V"
+
+      - name: Build whisper-proxy (main64.exe)
+        run: cargo build --release -p whisper-proxy
+
+      - name: Build installer (embeds main64.exe)
+        run: cargo build --release -p whisper-proxy-installer
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            target/release/main64.exe
+            target/release/whisper-proxy-installer.exe
